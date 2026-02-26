@@ -2,9 +2,10 @@
   <div class="login-wrap">
     <div class="login-box card">
       <h2>🔥 A股热度脉冲</h2>
+      <p class="text-dim" style="text-align:center;margin-bottom:24px;font-size:12px">全A股热度异动监控系统</p>
       <input v-model="pwd" type="password" placeholder="输入密码" @keyup.enter="doLogin" />
       <button class="btn btn-primary" @click="doLogin" :disabled="loading">{{ loading ? '登录中...' : '登 录' }}</button>
-      <p v-if="err" style="color:var(--red);font-size:12px;margin-top:8px;text-align:center">{{ err }}</p>
+      <p v-if="err" style="color:var(--red);font-size:12px;margin-top:10px;text-align:center">{{ err }}</p>
     </div>
   </div>
 </template>
