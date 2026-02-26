@@ -4,6 +4,10 @@ import os
 import time
 from contextlib import asynccontextmanager
 
+# Remove proxy for this process - Chinese financial APIs don't need proxy
+for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+    os.environ.pop(k, None)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
