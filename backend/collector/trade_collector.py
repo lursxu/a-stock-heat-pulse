@@ -5,61 +5,79 @@ from db import get_conn
 
 log = logging.getLogger(__name__)
 
-_SESSION = requests.Session()
-_SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
-_SESSION.trust_env = False  # Ignore proxy env vars
-
-SINA_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
+QT_URL = "https://qt.gtimg.cn/q="
 
 
-def _fetch_page(page: int, num: int = 80) -> list[dict]:
+def _build_symbol(code: str) -> str:
+    if code.startswith("6") or code.startswith("9"):
+        return f"sh{code}"
+    return f"sz{code}"
+
+
+def _parse_line(line: str) -> dict | None:
+    """Parse one Tencent quote line: v_sh600519="1~name~code~price~..."."""
+    line = line.strip().rstrip(";")
+    if "=" not in line or '~' not in line:
+        return None
+    raw = line.split("=", 1)[1].strip('"')
+    p = raw.split("~")
+    if len(p) < 50:
+        return None
     try:
-        r = _SESSION.get(SINA_URL, params={
-            "page": page, "num": num, "sort": "changepercent", "asc": 0, "node": "hs_a",
-        }, timeout=15)
-        if r.status_code != 200:
-            log.warning("Sina page %d status %d", page, r.status_code)
-            return []
-        data = r.json()
-        return data if isinstance(data, list) else []
+        return {
+            "code": p[2],
+            "name": p[1],
+            "price": float(p[3]) if p[3] else 0,
+            "change_pct": float(p[32]) if p[32] else 0,
+            "volume": float(p[6]) if p[6] else 0,       # 成交量(手)
+            "amount": float(p[37]) if p[37] else 0,      # 成交额(万)
+            "turnover_rate": float(p[38]) if p[38] else 0,  # 换手率
+            "volume_ratio": float(p[49]) if p[49] else 0,   # 量比
+        }
+    except (ValueError, IndexError):
+        return None
+
+
+def _fetch_batch(symbols: list[str]) -> list[dict]:
+    try:
+        r = requests.get(QT_URL + ",".join(symbols), timeout=15)
+        results = []
+        for line in r.text.split(";"):
+            d = _parse_line(line)
+            if d and d["price"] > 0:
+                results.append(d)
+        return results
     except Exception as e:
-        log.warning("Sina page %d failed: %s", page, e)
+        log.warning("Tencent batch fetch failed: %s", e)
         return []
 
 
 def collect() -> pd.DataFrame:
-    """Fetch all A-share quotes from Sina finance and store snapshot."""
+    """Fetch all A-share quotes from Tencent and store snapshot."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT code FROM stock_basic").fetchall()
+    codes = [r["code"] for r in rows]
+
+    if not codes:
+        log.warning("No stocks in stock_basic, run sync_basic first")
+        return pd.DataFrame()
+
     all_rows = []
-    for page in range(1, 80):  # ~5000 stocks / 80 per page
-        data = _fetch_page(page)
-        if not data:
-            break
-        for item in data:
-            all_rows.append({
-                "code": item.get("code", ""),
-                "name": item.get("name", ""),
-                "price": float(item.get("trade", 0) or 0),
-                "change_pct": float(item.get("changepercent", 0) or 0),
-                "volume": float(item.get("volume", 0) or 0),
-                "amount": float(item.get("amount", 0) or 0),
-                "turnover_rate": float(item.get("turnover", 0) or 0) if "turnover" in item else 0,
-                "volume_ratio": float(item.get("volume_ratio", 0) or 0) if "volume_ratio" in item else 0,
-            })
+    batch_size = 50
+    for i in range(0, len(codes), batch_size):
+        batch = [_build_symbol(c) for c in codes[i:i + batch_size]]
+        all_rows.extend(_fetch_batch(batch))
 
     if not all_rows:
         log.warning("No trade data fetched")
         return pd.DataFrame()
 
     df = pd.DataFrame(all_rows)
-
-    # Compute volume_ratio from volume if not provided: volume / avg_volume approximation
-    # For now just use raw data, volume_ratio will be 0 for sina source
-
     with get_conn() as conn:
         conn.executemany(
             "INSERT INTO trade_snapshots(code,name,price,change_pct,volume,amount,turnover_rate,volume_ratio) "
             "VALUES(:code,:name,:price,:change_pct,:volume,:amount,:turnover_rate,:volume_ratio)",
             all_rows,
         )
-    log.info("Collected %d trade records from Sina", len(all_rows))
+    log.info("Collected %d trade records from Tencent", len(all_rows))
     return df
