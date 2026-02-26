@@ -4,6 +4,7 @@
       <h2>🔥 热度脉冲</h2>
       <router-link to="/">📊 监控面板</router-link>
       <router-link to="/alerts">🚨 告警历史</router-link>
+      <router-link to="/jobs">⏱️ 任务管理</router-link>
       <router-link to="/settings">⚙️ 系统配置</router-link>
       <a href="#" @click.prevent="auth.logout(); $router.push('/login')">🚪 退出</a>
     </div>

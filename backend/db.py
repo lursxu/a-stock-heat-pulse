@@ -30,6 +30,14 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript("""
+        CREATE TABLE IF NOT EXISTS stock_basic (
+            code TEXT PRIMARY KEY,
+            name TEXT,
+            industry TEXT,
+            market TEXT,
+            updated_at DATETIME DEFAULT (datetime('now','localtime'))
+        );
+
         CREATE TABLE IF NOT EXISTS trade_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             code TEXT NOT NULL,
@@ -78,10 +86,20 @@ def init_db():
             ts DATETIME DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(ts);
+
+        CREATE TABLE IF NOT EXISTS job_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            message TEXT,
+            duration_sec REAL,
+            ts DATETIME DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_job_logs_ts ON job_logs(ts);
         """)
 
 
 def cleanup_old_data(days: int = 90):
     with get_conn() as conn:
-        for tbl in ("trade_snapshots", "sentiment_snapshots", "heat_scores", "alerts"):
+        for tbl in ("trade_snapshots", "sentiment_snapshots", "heat_scores", "alerts", "job_logs"):
             conn.execute(f"DELETE FROM {tbl} WHERE ts < datetime('now','localtime','-{days} days')")

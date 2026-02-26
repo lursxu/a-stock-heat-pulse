@@ -1,5 +1,11 @@
 <template>
   <div>
+    <div style="display:flex;gap:12px;margin-bottom:16px">
+      <div class="card" style="flex:1;text-align:center"><div style="font-size:24px;color:#1890ff">{{ stats.stocks }}</div><div style="font-size:12px;color:#999">监控股票数</div></div>
+      <div class="card" style="flex:1;text-align:center"><div style="font-size:24px;color:#f5222d">{{ stats.anomalies }}</div><div style="font-size:12px;color:#999">今日异常</div></div>
+      <div class="card" style="flex:1;text-align:center"><div style="font-size:24px;color:#52c41a">{{ stats.scans }}</div><div style="font-size:12px;color:#999">今日扫描次数</div></div>
+    </div>
+
     <div class="card">
       <h3>📊 热度排行榜 <button class="btn btn-sm" @click="triggerScan" style="margin-left:12px">手动扫描</button></h3>
       <HeatRanking :items="ranking" @select="selectedCode = $event" />
@@ -21,7 +27,7 @@
           <td>{{ a.name }}({{ a.code }})</td>
           <td>{{ a.total_heat?.toFixed(3) }}</td>
           <td class="tag-red">{{ a.zscore?.toFixed(1) }}</td>
-          <td :class="a.change_pct>=0?'tag-red':'tag-green'">{{ a.change_pct?.toFixed(2) }}%</td>
+          <td :class="(a.change_pct||0)>=0?'tag-red':'tag-green'">{{ a.change_pct?.toFixed(2) }}%</td>
           <td>{{ a.volume_ratio?.toFixed(2) }}</td>
         </tr>
       </table>
@@ -39,21 +45,30 @@ const ranking = ref([])
 const anomalies = ref([])
 const selectedCode = ref('')
 const page = ref(1)
-const total = ref(0)
-const size = 50
 const totalPages = ref(1)
+const stats = ref({ stocks: 0, anomalies: 0, scans: 0 })
 let ws = null
 
 async function fetchRanking() {
-  const { data } = await axios.get('/api/heat/ranking', { params: { page: page.value, size } })
+  const { data } = await axios.get('/api/heat/ranking', { params: { page: page.value, size: 50 } })
   ranking.value = data.items
-  total.value = data.total
-  totalPages.value = Math.max(1, Math.ceil(data.total / size))
+  totalPages.value = Math.max(1, Math.ceil(data.total / 50))
+}
+
+async function fetchStats() {
+  try {
+    const { data: stockData } = await axios.get('/api/stocks')
+    stats.value.stocks = stockData.total
+    const { data: alertData } = await axios.get('/api/alerts', { params: { size: 1 } })
+    stats.value.anomalies = alertData.total
+    const { data: jobData } = await axios.get('/api/jobs/logs', { params: { job_name: 'collect_trade', size: 1 } })
+    stats.value.scans = jobData.total
+  } catch {}
 }
 
 async function triggerScan() {
-  await axios.post('/api/job/trigger')
-  setTimeout(fetchRanking, 3000)
+  await axios.post('/api/jobs/full_scan/trigger')
+  setTimeout(() => { fetchRanking(); fetchStats() }, 5000)
 }
 
 function connectWs() {
@@ -69,6 +84,6 @@ function connectWs() {
   ws.onclose = () => setTimeout(connectWs, 3000)
 }
 
-onMounted(() => { fetchRanking(); connectWs() })
+onMounted(() => { fetchRanking(); fetchStats(); connectWs() })
 onUnmounted(() => { if (ws) ws.close() })
 </script>
