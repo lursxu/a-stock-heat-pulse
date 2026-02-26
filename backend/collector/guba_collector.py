@@ -1,4 +1,4 @@
-import logging, time, random
+import logging, time, random, re, json
 import requests
 from db import get_conn
 
@@ -13,30 +13,32 @@ _SESSION.trust_env = False
 
 
 def _fetch_one(code: str) -> dict:
-    """Fetch post count for a stock from eastmoney guba API."""
-    # eastmoney guba uses 6-digit code with market prefix
-    market = "1" if code.startswith("6") else "0"
-    url = f"https://guba.eastmoney.com/interface/GetData.aspx?path=newtopic/api&ps=1&p=1&type=0&code={market}{code}"
+    """Fetch discussion stats from guba page scraping."""
+    url = f"https://guba.eastmoney.com/list,{code}.html"
     try:
-        resp = _SESSION.get(url, timeout=5)
-        data = resp.json()
-        total = data.get("re", [{}])
-        post_count = data.get("count", 0) if isinstance(data.get("count"), int) else 0
-        comment_count = sum(item.get("rc", 0) for item in (total if isinstance(total, list) else []))
-        return {"post_count": post_count, "comment_count": comment_count}
+        resp = _SESSION.get(url, timeout=8)
+        m = re.search(r'var\s+article_list\s*=\s*(\{.*?\});', resp.text, re.DOTALL)
+        if not m:
+            return {"post_count": 0, "comment_count": 0}
+        data = json.loads(m.group(1))
+        post_count = data.get("count", 0) or 0
+        articles = data.get("re", [])
+        if not isinstance(articles, list):
+            articles = []
+        total_clicks = sum((a.get("post_click_count") or 0) for a in articles)
+        total_comments = sum((a.get("post_comment_count") or 0) for a in articles)
+        return {"post_count": post_count, "comment_count": total_clicks + total_comments}
     except Exception as e:
         log.debug("Guba fetch failed for %s: %s", code, e)
         return {"post_count": 0, "comment_count": 0}
 
 
 def collect(codes: list[str]):
-    """Collect guba sentiment for given stock codes."""
     results = []
     for code in codes:
         info = _fetch_one(code)
         results.append({"code": code, "source": "guba", **info})
-        time.sleep(random.uniform(0.1, 0.3))
-
+        time.sleep(random.uniform(0.3, 0.6))
     if results:
         with get_conn() as conn:
             conn.executemany(

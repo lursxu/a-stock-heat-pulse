@@ -42,10 +42,6 @@ def notify(anomalies: list[dict]):
         return
 
     cfg = get_config()["alert"]
-    url = cfg.get("webhook_url", "")
-    if not url:
-        log.warning("Webhook URL not configured, skipping notification")
-        return
 
     # Filter duplicates
     filtered = [a for a in anomalies if not _is_dedup(a["code"])]
@@ -53,20 +49,25 @@ def notify(anomalies: list[dict]):
         log.info("All anomalies deduped, skipping")
         return
 
-    # Store alerts
+    # Always store alerts
     with get_conn() as conn:
         conn.executemany(
             "INSERT INTO alerts(code,name,total_heat,zscore,change_pct,volume_ratio,message) "
             "VALUES(:code,:name,:total_heat,:zscore,:change_pct,:volume_ratio,:message)",
             [{**a, "message": ""} for a in filtered],
         )
+    log.info("Stored %d alerts", len(filtered))
 
+    # Send webhook if configured
+    url = cfg.get("webhook_url", "")
+    if not url:
+        return
     msg = _format_message(filtered)
     try:
         if cfg["webhook_type"] == "feishu":
             _send_feishu(url, msg)
         else:
             _send_dingtalk(url, msg)
-        log.info("Sent alert for %d stocks", len(filtered))
+        log.info("Sent webhook for %d stocks", len(filtered))
     except Exception as e:
         log.error("Failed to send webhook: %s", e)

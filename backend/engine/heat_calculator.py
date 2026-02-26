@@ -43,13 +43,17 @@ def calc_sentiment_heat(codes: list[str]) -> dict[str, float]:
     for r in rows:
         code = r["code"]
         if code not in data:
-            data[code] = {"guba": 0, "xueqiu": 0}
+            data[code] = {"guba": 0, "ths_hot": 0}
         total = (r["post_count"] or 0) + (r["comment_count"] or 0)
-        data[code][r["source"]] = total
+        src = r["source"]
+        if src in ("guba",):
+            data[code]["guba"] = total
+        else:
+            data[code]["ths_hot"] = total
 
     # Normalize across all codes
     guba_vals = np.array([v["guba"] for v in data.values()], dtype=float)
-    xq_vals = np.array([v["xueqiu"] for v in data.values()], dtype=float)
+    xq_vals = np.array([v["ths_hot"] for v in data.values()], dtype=float)
 
     def _norm(arr):
         mn, mx = arr.min(), arr.max()
