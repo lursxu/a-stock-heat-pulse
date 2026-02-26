@@ -11,6 +11,7 @@ def sync():
     """Sync all A-share stock basic info from Sina."""
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0"})
+    session.trust_env = False
 
     all_rows = []
     for page in range(1, 80):

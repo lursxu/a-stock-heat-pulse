@@ -11,6 +11,7 @@ for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from apscheduler.schedulers.background import BackgroundScheduler
 
 import config
@@ -190,7 +191,7 @@ async def lifespan(application):
 
     # Individual scheduled jobs
     scheduler.add_job(job_sync_basic, "cron", hour=9, minute=0, id="sync_basic", replace_existing=True)
-    scheduler.add_job(run_scan, "interval", minutes=interval, id="full_scan", replace_existing=True)
+    scheduler.add_job(run_scan, "cron", minute=f"*/{interval}", hour="9-15", id="full_scan", replace_existing=True)
     scheduler.add_job(job_cleanup, "cron", hour=3, id="cleanup", replace_existing=True)
     scheduler.start()
     log.info("Scheduler started, scan interval=%d min", interval)
@@ -206,7 +207,13 @@ app.add_api_websocket_route("/ws", ws_endpoint)
 
 _static = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.isdir(_static):
-    app.mount("/", StaticFiles(directory=_static, html=True), name="static")
+    app.mount("/assets", StaticFiles(directory=os.path.join(_static, "assets")), name="assets")
+    _index = os.path.join(_static, "index.html")
+
+    @app.get("/{path:path}")
+    async def spa_fallback(path: str):
+        # Serve index.html for all non-API routes (SPA history mode)
+        return FileResponse(_index)
 
 
 if __name__ == "__main__":

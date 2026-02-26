@@ -7,6 +7,7 @@ log = logging.getLogger(__name__)
 
 _SESSION = requests.Session()
 _SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
+_SESSION.trust_env = False  # Ignore proxy env vars
 
 SINA_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
 
@@ -16,9 +17,13 @@ def _fetch_page(page: int, num: int = 80) -> list[dict]:
         r = _SESSION.get(SINA_URL, params={
             "page": page, "num": num, "sort": "changepercent", "asc": 0, "node": "hs_a",
         }, timeout=15)
-        return r.json() if r.status_code == 200 else []
+        if r.status_code != 200:
+            log.warning("Sina page %d status %d", page, r.status_code)
+            return []
+        data = r.json()
+        return data if isinstance(data, list) else []
     except Exception as e:
-        log.debug("Sina page %d failed: %s", page, e)
+        log.warning("Sina page %d failed: %s", page, e)
         return []
 
 
