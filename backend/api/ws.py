@@ -13,11 +13,12 @@ async def ws_endpoint(ws: WebSocket):
     _clients.append(ws)
     try:
         while True:
-            await ws.receive_text()  # keep alive
+            await ws.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
-        _clients.remove(ws)
+        if ws in _clients:
+            _clients.remove(ws)
 
 
 async def broadcast(data: dict):
@@ -26,4 +27,19 @@ async def broadcast(data: dict):
         try:
             await ws.send_text(msg)
         except Exception:
-            _clients.remove(ws)
+            if ws in _clients:
+                _clients.remove(ws)
+
+
+def broadcast_sync(data: dict):
+    """Sync wrapper for broadcast, safe to call from background threads."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(broadcast(data))
+        else:
+            loop.run_until_complete(broadcast(data))
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(broadcast(data))
+        loop.close()
