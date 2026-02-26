@@ -108,15 +108,14 @@ async function trigger(id) {
   running[id] = true
   try {
     await axios.post(`/api/jobs/${id}/trigger`)
-    // Poll for completion
-    const poll = setInterval(async () => {
+    setTimeout(async () => {
       await fetchJobs()
       await fetchLogs()
       running[id] = false
-      clearInterval(poll)
     }, 3000)
-  } catch {
+  } catch (e) {
     running[id] = false
+    alert('执行失败: ' + (e.response?.data?.detail || e.message))
   }
 }
 

@@ -15,12 +15,21 @@ export const useAuthStore = defineStore('auth', () => {
   function logout() {
     token.value = ''
     localStorage.removeItem('token')
+    delete axios.defaults.headers.common['Authorization']
   }
 
-  // Restore token on init
   if (token.value) {
     axios.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
   }
+
+  // Auto logout on 401
+  axios.interceptors.response.use(r => r, err => {
+    if (err.response?.status === 401) {
+      logout()
+      window.location.href = '/login'
+    }
+    return Promise.reject(err)
+  })
 
   return { token, login, logout }
 })
