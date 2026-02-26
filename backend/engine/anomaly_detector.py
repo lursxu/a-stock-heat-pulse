@@ -6,12 +6,30 @@ from db import get_conn
 log = logging.getLogger(__name__)
 
 
+def _calc_stats(current: float, past: list[float]) -> dict:
+    arr = np.array(past, dtype=float)
+    mean, std = arr.mean(), arr.std()
+    zscore = (current - mean) / std if std > 1e-9 else ((current - mean) / 1e-9 if current > mean else 0.0)
+
+    box_upper = np.percentile(arr, 75)
+    box_lower = np.percentile(arr, 25)
+    iqr = box_upper - box_lower
+    box_cv = (std / mean) if mean > 1e-9 else 999
+
+    breakout = 0.0
+    if iqr > 1e-9:
+        breakout = max(0, (current - box_upper) / iqr)
+    elif current > mean and mean > 1e-9:
+        breakout = (current - mean) / mean * 10
+
+    return {"zscore": zscore, "box_cv": box_cv, "box_upper": box_upper, "box_lower": box_lower, "breakout": breakout, "mean": mean, "std": std}
+
+
 def detect(heat_df) -> list[dict]:
     """
-    Detect anomalies using:
-    1. Z-Score on sliding window
-    2. Box range (箱体) identification + breakout detection
-    A stock is anomalous if its heat was stable (low volatility) then suddenly spikes.
+    Detect anomalies by comparing today's trade_heat against
+    daily-deduplicated historical trade_heat (one value per day).
+    This avoids noise from intraday repeated snapshots.
     """
     if heat_df.empty:
         return []
@@ -25,44 +43,38 @@ def detect(heat_df) -> list[dict]:
     with get_conn() as conn:
         for _, row in heat_df.iterrows():
             code = row["code"]
-            current = row["total_heat"]
+            current_trade = row.get("trade_heat", row["total_heat"])
+            current_total = row["total_heat"]
 
+            # Get daily-deduplicated history: one record per day (latest per day)
             history = conn.execute(
-                "SELECT total_heat FROM heat_scores WHERE code=? ORDER BY ts DESC LIMIT ?",
-                (code, window + 1),
+                "SELECT trade_heat, total_heat, DATE(ts) as day "
+                "FROM heat_scores WHERE code=? AND id IN "
+                "(SELECT MAX(id) FROM heat_scores WHERE code=? GROUP BY DATE(ts)) "
+                "ORDER BY day DESC LIMIT ?",
+                (code, code, window + 1),
             ).fetchall()
 
-            past = [h["total_heat"] for h in history[1:]] if len(history) > 1 else []
-            if len(past) < min_pts:
+            # Exclude today, keep only past days
+            today_day = None
+            if history:
+                today_day = history[0]["day"]
+            past_trade = [h["trade_heat"] for h in history[1:] if h["trade_heat"] is not None]
+
+            if len(past_trade) < min_pts:
                 continue
 
-            arr = np.array(past, dtype=float)
-            mean, std = arr.mean(), arr.std()
-            if std < 1e-9:
-                zscore = (current - mean) / 1e-9 if current > mean else 0
-            else:
-                zscore = (current - mean) / std
+            stats = _calc_stats(current_trade, past_trade)
+            zscore = stats["zscore"]
 
-            # Box range analysis: check if recent history was stable then current breaks out
-            box_upper = np.percentile(arr, 75)
-            box_lower = np.percentile(arr, 25)
-            iqr = box_upper - box_lower
-            box_cv = (std / mean) if mean > 1e-9 else 999  # coefficient of variation
-
-            # Breakout score: how far above the box upper bound
-            breakout = 0
-            if iqr > 1e-9:
-                breakout = max(0, (current - box_upper) / iqr)
-            elif current > mean and mean > 1e-9:
-                breakout = (current - mean) / mean * 10
-
-            # Combined anomaly: stable box + sudden spike
-            # A low CV means the stock was in a tight range (箱体平稳)
-            is_stable_box = box_cv < 0.5  # relatively stable history
             is_zscore_anomaly = zscore >= threshold
-            is_breakout = breakout >= 1.5  # 1.5x IQR above Q3
+            is_stable_box = stats["box_cv"] < 0.3
+            is_breakout = is_stable_box and stats["breakout"] >= 3.0
 
-            is_anomaly = is_zscore_anomaly or (is_stable_box and is_breakout)
+            # Additional filter: trade_heat must be meaningfully above historical mean
+            # This prevents low-heat stocks with tiny fluctuations from triggering
+            heat_lift = (current_trade - stats["mean"]) / stats["mean"] if stats["mean"] > 1e-4 else 0
+            is_meaningful = heat_lift > 1.0 and current_trade > 0.08  # doubled AND above absolute floor
 
             # Update zscore in db
             conn.execute(
@@ -70,19 +82,21 @@ def detect(heat_df) -> list[dict]:
                 (zscore, code, code),
             )
 
-            if is_anomaly:
+            if (is_zscore_anomaly or is_breakout) and is_meaningful:
                 anomalies.append({
                     "code": code,
                     "name": row.get("name", ""),
-                    "total_heat": round(current, 4),
+                    "total_heat": round(current_total, 4),
+                    "trade_heat": round(current_trade, 4),
                     "zscore": round(zscore, 2),
                     "change_pct": row.get("change_pct", 0),
                     "volume_ratio": row.get("volume_ratio", 0),
-                    "breakout": round(breakout, 2),
-                    "box_cv": round(box_cv, 4),
-                    "box_upper": round(box_upper, 4),
-                    "box_lower": round(box_lower, 4),
-                    "anomaly_type": "zscore" if is_zscore_anomaly else "box_breakout",
+                    "breakout": round(stats["breakout"], 2),
+                    "box_cv": round(stats["box_cv"], 4),
+                    "box_upper": round(stats["box_upper"], 4),
+                    "box_lower": round(stats["box_lower"], 4),
+                    "hist_mean": round(stats["mean"], 4),
+                    "anomaly_type": "box_breakout" if (is_breakout and not is_zscore_anomaly) else "zscore",
                 })
 
     anomalies.sort(key=lambda x: x["zscore"], reverse=True)

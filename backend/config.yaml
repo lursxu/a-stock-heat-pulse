@@ -1,29 +1,24 @@
-scanner:
-  interval_minutes: 3
-  top_n_for_sentiment: 200
-
-detection:
-  zscore_threshold: 2.5
-  window_size: 20
-  min_data_points: 5
-
-heat_weights:
-  trade: 0.6
-  sentiment: 0.4
-  volume_ratio: 0.4
-  turnover_rate: 0.3
-  amount_change: 0.3
-  guba_weight: 0.5
-  xueqiu_weight: 0.5
-
 alert:
   dedup_minutes: 30
   webhook_type: feishu
-  webhook_url: ""
-
+  webhook_url: ''
 auth:
-  password: "admin123"
-
+  password: admin123
 data:
+  db_path: data/heat_pulse.db
   retention_days: 90
-  db_path: "data/heat_pulse.db"
+detection:
+  min_data_points: 5
+  window_size: 20
+  zscore_threshold: 3.0
+heat_weights:
+  amount_change: 0.3
+  guba_weight: 0.5
+  sentiment: 0.4
+  trade: 0.6
+  turnover_rate: 0.3
+  volume_ratio: 0.4
+  xueqiu_weight: 0.5
+scanner:
+  interval_minutes: 3
+  top_n_for_sentiment: 200
