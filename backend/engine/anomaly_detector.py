@@ -76,6 +76,11 @@ def detect(heat_df) -> list[dict]:
             heat_lift = (current_trade - stats["mean"]) / stats["mean"] if stats["mean"] > 1e-4 else 0
             is_meaningful = heat_lift > 1.0 and current_trade > 0.08  # doubled AND above absolute floor
 
+            # Filter out stocks already in an active box (high historical mean)
+            # A stock with mean trade_heat > 0.05 is already "warm", needs stronger signal
+            if stats["mean"] > 0.05:
+                is_meaningful = is_meaningful and heat_lift > 2.0  # need 3x for warm stocks
+
             # Update zscore in db
             conn.execute(
                 "UPDATE heat_scores SET zscore=? WHERE code=? AND id=(SELECT MAX(id) FROM heat_scores WHERE code=?)",
